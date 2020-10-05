@@ -22,22 +22,24 @@
 #define motor_interfaceType 1
 
 // Set the calibration numbers
-// Operator calibration
-#define operator_delay 1000
+// Operator calibration (Wait 3 seconds before spooling)
+#define operator_delay 3000
 
 // Motor calibration
 #define steps_per_revolution 3200 // Steps required for one full pass
-#define max_speed 3200.0 // Max speed in steps per second
+#define max_speed 500.0 // Max speed in steps per second
 #define max_acceleration 3000 // Max acceleration in steps per second squared
+#define constant_run_speed 500.0
 
 // Screw calibration
 #define mm_per_step 0.0025 // Linear distance of finger per step (in mm)
 
 // Coil settings
 #define wirewidth 0.2 // Width of the wire used to spool the magnet
-#define n_layers 9 // Number of layers required
-#define n_turns_per_layer 110 // Number of turns per layer
-#define coil_height 25 // Height of the coil in mm (essentially how far we're moving during the spooling)
+int initial_direction = 1;
+int n_layers = 9; // Number of layers required
+int n_turns_per_layer = 110; // Number of turns per layer
+float coil_height = 25; // Height of the coil in mm (essentially how far we're moving during the spooling)
 
 // Setup stepper class instances
 AccelStepper coil_motor = AccelStepper(motor_interfaceType, step_pin_m1, dir_pin_m1);
@@ -116,6 +118,10 @@ void stop_spooling() {
 
   // Indicate we're done spooling
   done_spooling = true;
+
+  // De-energize the coils
+  digitalWrite(enable_pin_m1, HIGH);
+  digitalWrite(enable_pin_m2, HIGH);
 }
 
 // Called when we're done spooling and the button has been pressed
@@ -156,6 +162,41 @@ void do_calibration() {
   digitalWrite(enable_pin_m2, HIGH);
 }
 
+void run_at_speed() {
+  // Energize the coils
+  digitalWrite(enable_pin_m1, LOW);
+
+  // Compute how far to run the motor
+  double remaining_distance = n_turns_per_layer * n_layers * coil_height;
+  int n_rounds = round(remaining_distance / (5000 * mm_per_step));
+
+  // Set the speed
+  coil_motor.setMaxSpeed(constant_run_speed);
+  coil_motor.setSpeed(constant_run_speed);
+
+  // Iterate through the rounds we wish to take
+  for (int i = 0; i < n_rounds; i++) {
+    // Alert the user to how far we are
+    Serial.print(n_rounds - i);
+    Serial.println(" remaining!");
+
+    // Set the new distance
+    coil_motor.move(initial_direction * 5000);
+
+    // And run the motors
+    while (abs(coil_motor.distanceToGo()) > 2500) {
+      run_motors();
+    }
+  }
+
+  // And run the last bit motors
+  while (abs(coil_motor.distanceToGo()) > 0) {
+    run_motors();
+  }
+
+  digitalWrite(enable_pin_m1, HIGH);
+}
+
 // Called at every loop until the button has been pressed
 void monitor_button() {
   unsigned long led_interval = 0;
@@ -187,8 +228,92 @@ void monitor_button() {
     input_string.trim();
     Serial.println(input_string);
     if (input_string == "go" && !is_spooling) {
-      Serial.println("Going!");
-      start_spooling();
+      Serial.println("Which configuration would you like?");
+
+      // Set timeout to 30 seconds
+      Serial.setTimeout(30000);
+      int config_number = Serial.parseInt();
+
+      Serial.print("Setting up ");
+      Serial.println(config_number);
+
+      bool should_start_spooling = false;
+      bool should_start_running = false;
+      
+      if (config_number == 1) {
+        // Large coil configuration
+        // Auto spool
+        coil_height = 25.0;
+        n_turns_per_layer = 110;
+        n_layers = 9;
+        should_start_spooling = true;
+      } else if (config_number == 2) {
+        // Set configuration for small 3.9mm spool
+        // Auto spool
+        coil_height = 3.9;
+        n_turns_per_layer = 17;
+        initial_direction = 1;
+        n_layers = 11;
+        should_start_spooling = true;
+      }
+      else if (config_number == 3) {
+        // Set configuration for small 3.9mm spool
+        // Auto spool
+        coil_height = 3.9;
+        n_turns_per_layer = 17;
+        initial_direction = 1;
+        n_layers = 11;
+        should_start_spooling = true;
+
+        // The sets the direction to be opposite
+        initial_direction = -1;
+      }
+      else if (config_number == 4) {
+        // Set configuration for small 3.9mm spool
+        // Manual spool
+        coil_height = 3.9;
+        n_turns_per_layer = 17;
+        initial_direction = 1;
+        n_layers = 11;
+        should_start_running = true;
+      }
+      else if (config_number == 5) {
+        // Set configuration for small 3.9mm spool
+        // Manual spool
+        coil_height = 3.9;
+        n_turns_per_layer = 17;
+        initial_direction = 1;
+        n_layers = 11;
+        should_start_running = true;
+
+        // The sets the direction to be opposite
+        initial_direction = -1;
+      }
+      else {
+        Serial.println("Invalid config choice!");
+      }
+
+      if (should_start_spooling) {
+        // Wait for the operator to be ready
+        Serial.print("Starting winding in ");
+        Serial.print(round(operator_delay/1000));
+        Serial.println(" seconds");
+        delay(operator_delay);
+
+        Serial.println("Going!");
+        start_spooling();
+      }
+
+      if (should_start_running) {
+        // Wait for the operator to be ready
+        Serial.print("Starting run in ");
+        Serial.print(round(operator_delay/1000));
+        Serial.println(" seconds");
+        delay(operator_delay);
+
+        Serial.println("Running!");
+        run_at_speed();
+      }
     }
 
     if (input_string == "calib") {
@@ -239,10 +364,10 @@ void spooling() {
 
         // Set the distance
         finger_motor.move(steps_to_go_finger);
-        coil_motor.move(m * steps_per_revolution);
+        coil_motor.move(initial_direction * m * steps_per_revolution);
 
         // Move the motors
-        while (coil_motor.distanceToGo() > 0 || finger_motor.distanceToGo() > 0) {
+        while (coil_motor.distanceToGo() != 0 || finger_motor.distanceToGo() != 0) {
           run_motors();
         }
       }
