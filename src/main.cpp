@@ -273,7 +273,7 @@ void monitor_button() {
         // Manual spool
         coil_height = 3.9;
         n_turns_per_layer = 17;
-        initial_direction = 1;
+        initial_direction = -1;
         n_layers = 11;
         should_start_running = true;
       }
